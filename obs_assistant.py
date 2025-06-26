@@ -571,8 +571,51 @@ class OCRWorker(QThread):
             if self.cancelled:
                 return
                 
-            raw_text = pytesseract.image_to_string(self.image)
+            # Улучшенные настройки Tesseract для лучшего распознавания
+            custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя .,!?()[]{}":;+-=*/\\|_@#$%^&<>~`'
+            
+            # Пробуем разные PSM режимы для лучшего результата
+            psm_modes = [6, 8, 7, 13]  # Разные режимы сегментации страницы
+            best_text = ""
+            best_confidence = 0
+            
+            for psm in psm_modes:
+                try:
+                    config = f'--oem 3 --psm {psm}'
+                    
+                    # Получаем текст и данные о достоверности
+                    data = pytesseract.image_to_data(self.image, config=config, output_type=pytesseract.Output.DICT)
+                    text = pytesseract.image_to_string(self.image, config=config)
+                    
+                    # Вычисляем среднюю достоверность
+                    confidences = [int(conf) for conf in data['conf'] if int(conf) > 0]
+                    avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+                    
+                    # Используем текст с наивысшей достоверностью
+                    if avg_confidence > best_confidence and text.strip():
+                        best_confidence = avg_confidence
+                        best_text = text.strip()
+                        
+                except Exception:
+                    continue
+            
+            # Если ни один режим не дал хорошего результата, используем базовый
+            if not best_text:
+                try:
+                    raw_text = pytesseract.image_to_string(self.image, config='--oem 3 --psm 6')
+                except Exception:
+                    raw_text = pytesseract.image_to_string(self.image)
+            else:
+                raw_text = best_text
+                
             raw_text = raw_text.strip()
+            
+            # Дополнительная очистка текста
+            if raw_text:
+                # Удаляем лишние пробелы и переносы строк
+                raw_text = ' '.join(raw_text.split())
+                # Убираем очевидно неправильные символы
+                raw_text = ''.join(char for char in raw_text if ord(char) < 65536)
             
             self.progress_updated.emit(40)
             if self.cancelled:
@@ -886,6 +929,29 @@ class SettingsDialog(QDialog):
         self.preprocessing_checkbox.setChecked(self.settings.get('preprocessing', True))
         ocr_layout.addRow(self.preprocessing_checkbox)
         
+        # Настройки качества изображения
+        quality_group = QGroupBox("Настройки качества OCR")
+        quality_layout = QFormLayout()
+        
+        self.scale_factor_spin = QSpinBox()
+        self.scale_factor_spin.setRange(1, 5)
+        self.scale_factor_spin.setValue(self.settings.get('scale_factor', 3))
+        self.scale_factor_spin.setToolTip("Увеличение изображения для лучшего распознавания (1-5x)")
+        quality_layout.addRow("Увеличение изображения:", self.scale_factor_spin)
+        
+        self.debug_images_checkbox = QCheckBox("Сохранять отладочные изображения")
+        self.debug_images_checkbox.setChecked(self.settings.get('debug_images', False))
+        self.debug_images_checkbox.setToolTip("Сохранять оригинальные и обработанные изображения в папку debug_images/")
+        quality_layout.addRow(self.debug_images_checkbox)
+        
+        self.high_quality_checkbox = QCheckBox("Режим высокого качества (медленнее)")
+        self.high_quality_checkbox.setChecked(self.settings.get('high_quality_mode', False))
+        self.high_quality_checkbox.setToolTip("Использовать дополнительные алгоритмы для лучшего качества")
+        quality_layout.addRow(self.high_quality_checkbox)
+        
+        quality_group.setLayout(quality_layout)
+        ocr_layout.addRow(quality_group)
+        
         self.interview_mode_checkbox = QCheckBox("Режим помощника на собеседовании")
         self.interview_mode_checkbox.setChecked(self.settings.get('interview_mode', False))
         ocr_layout.addRow(self.interview_mode_checkbox)
@@ -985,6 +1051,9 @@ class SettingsDialog(QDialog):
             'model': self.model_combo.currentText(),
             'ocr_language': self.language_combo.currentText(),
             'preprocessing': self.preprocessing_checkbox.isChecked(),
+            'scale_factor': self.scale_factor_spin.value(),
+            'debug_images': self.debug_images_checkbox.isChecked(),
+            'high_quality_mode': self.high_quality_checkbox.isChecked(),
             'interview_mode': self.interview_mode_checkbox.isChecked(),
             'user_name': self.user_name_input.text(),
             'whisper_language': self.whisper_language_combo.currentText(),
@@ -1257,6 +1326,9 @@ class OBSCompleteAssistantOptimized(QMainWindow):
             'model': 'gpt-4o',
             'ocr_language': 'eng',
             'preprocessing': True,
+            'scale_factor': 3,
+            'debug_images': False,
+            'high_quality_mode': False,
             'interview_mode': False,
             'user_name': '',
             'whisper_language': 'auto',
@@ -1640,14 +1712,89 @@ class OBSCompleteAssistantOptimized(QMainWindow):
         self.process_ocr()
         
     def preprocess_image(self, image):
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        """Улучшенная предобработка изображения для лучшего OCR"""
+        # Увеличиваем изображение в соответствии с настройками
+        scale_factor = self.settings.get('scale_factor', 3)
+        high_quality = self.settings.get('high_quality_mode', False)
+        height, width = image.shape[:2] if len(image.shape) == 3 else image.shape
+        new_width = int(width * scale_factor)
+        new_height = int(height * scale_factor)
         
-        denoised = cv2.fastNlMeansDenoising(gray)
+        # Используем INTER_CUBIC для лучшего качества при увеличении
+        upscaled = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
         
-        _, binary = cv2.threshold(denoised, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        # Конвертируем в оттенки серого
+        if len(upscaled.shape) == 3:
+            gray = cv2.cvtColor(upscaled, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = upscaled
         
-        kernel = np.ones((1, 1), np.uint8)
-        processed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+        # Применяем Gaussian blur для сглаживания шума
+        if high_quality:
+            blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+        else:
+            blurred = cv2.GaussianBlur(gray, (1, 1), 0)
+        
+        # Улучшенная денойзинг обработка
+        if high_quality:
+            # Более сильная денойзинг обработка для высокого качества
+            denoised = cv2.fastNlMeansDenoising(blurred, h=8, templateWindowSize=9, searchWindowSize=23)
+        else:
+            denoised = cv2.fastNlMeansDenoising(blurred, h=10, templateWindowSize=7, searchWindowSize=21)
+        
+        # Улучшение контраста с помощью CLAHE
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        enhanced = clahe.apply(denoised)
+        
+        # Адаптивная бинаризация для лучшего результата на разных типах текста
+        adaptive_thresh = cv2.adaptiveThreshold(
+            enhanced, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
+        )
+        
+        # Также пробуем OTSU метод
+        _, otsu_thresh = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        
+        # Выбираем лучший результат на основе количества белых пикселей
+        adaptive_white = np.sum(adaptive_thresh == 255)
+        otsu_white = np.sum(otsu_thresh == 255)
+        
+        # Используем тот метод, который дает больше белых пикселей (обычно лучше для текста)
+        if adaptive_white > otsu_white:
+            binary = adaptive_thresh
+        else:
+            binary = otsu_thresh
+        
+        # Морфологические операции для очистки
+        if high_quality:
+            # Более тщательная обработка для высокого качества
+            kernel_small = np.ones((1, 1), np.uint8)
+            kernel_medium = np.ones((2, 2), np.uint8)
+            kernel_large = np.ones((3, 3), np.uint8)
+            
+            # Удаляем очень мелкий шум
+            opening = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel_small, iterations=1)
+            
+            # Заполняем пробелы в буквах
+            closing = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, kernel_medium, iterations=2)
+            
+            # Дополнительная очистка
+            processed = cv2.morphologyEx(closing, cv2.MORPH_GRADIENT, kernel_large, iterations=1)
+            processed = cv2.bitwise_or(closing, processed)
+            
+            # Финальная очистка
+            processed = cv2.medianBlur(processed, 5)
+        else:
+            # Стандартная обработка
+            kernel = np.ones((2, 2), np.uint8)
+            
+            # Удаляем мелкий шум
+            opening = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
+            
+            # Заполняем пробелы в буквах
+            closing = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, kernel, iterations=1)
+            
+            # Дополнительная очистка от мелких артефактов
+            processed = cv2.medianBlur(closing, 3)
         
         return processed
         
@@ -1672,6 +1819,11 @@ class OBSCompleteAssistantOptimized(QMainWindow):
             
         roi = self.current_frame[y1:y2, x1:x2]
         
+        # Проверяем минимальный размер выделенной области
+        if roi.shape[0] < 20 or roi.shape[1] < 20:
+            self.status_widget.show_message("Selection too small for OCR", 3)
+            return
+        
         # Проверка кеша для избежания повторной обработки
         roi_hash = hash(roi.tobytes())
         if roi_hash == self.last_ocr_hash:
@@ -1682,14 +1834,47 @@ class OBSCompleteAssistantOptimized(QMainWindow):
         if self.settings.get('preprocessing', True):
             processed_roi = self.preprocess_image(roi)
             pil_image = Image.fromarray(processed_roi)
+            
+            # Опционально сохраняем отладочные изображения
+            if self.settings.get('debug_images', False):
+                try:
+                    debug_dir = "debug_images"
+                    os.makedirs(debug_dir, exist_ok=True)
+                    
+                    # Сохраняем оригинал и обработанное изображение
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    cv2.imwrite(f"{debug_dir}/original_{timestamp}.png", roi)
+                    cv2.imwrite(f"{debug_dir}/processed_{timestamp}.png", processed_roi)
+                    print(f"Debug images saved to {debug_dir}/")
+                except Exception as e:
+                    print(f"Failed to save debug images: {e}")
         else:
-            rgb_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
-            pil_image = Image.fromarray(rgb_roi)
+            # Даже без preprocessing применяем минимальные улучшения
+            if len(roi.shape) == 3:
+                rgb_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
+            else:
+                rgb_roi = roi
+                
+            # Увеличиваем изображение хотя бы в 2 раза
+            height, width = rgb_roi.shape[:2]
+            upscaled = cv2.resize(rgb_roi, (width*2, height*2), interpolation=cv2.INTER_CUBIC)
+            pil_image = Image.fromarray(upscaled)
             
         if self.settings.get('ocr_language', 'eng') != 'eng':
             pytesseract.pytesseract.tesseract_cmd = pytesseract.pytesseract.tesseract_cmd
             os.environ['TESSDATA_PREFIX'] = os.path.dirname(pytesseract.pytesseract.tesseract_cmd)
             
+        # Показываем информацию о качестве обработки
+        quality_info = []
+        if self.settings.get('preprocessing', True):
+            scale = self.settings.get('scale_factor', 3)
+            quality_info.append(f"Scale: {scale}x")
+            if self.settings.get('high_quality_mode', False):
+                quality_info.append("HQ mode")
+        
+        status_msg = f"Processing OCR ({', '.join(quality_info) if quality_info else 'Standard'})..."
+        self.status_widget.show_message(status_msg, 2)
+        
         self.ocr_worker = OCRWorker(
             pil_image, 
             self.settings.get('use_openai', False),
