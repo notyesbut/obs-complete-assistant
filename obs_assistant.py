@@ -1,7 +1,7 @@
 import sys
 import cv2
 import numpy as np
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QPushButton, 
+from PyQt5.QtWidgets import (QApplicaion, QMainWindow, QWidget, QVBoxLayout, QPushButton,
                            QLabel, QHBoxLayout, QTextEdit, QGroupBox, QLineEdit, 
                            QCheckBox, QSpinBox, QComboBox, QTabWidget, QListWidget,
                            QSplitter, QDialog, QDialogButtonBox, QFormLayout, QScrollArea,
@@ -410,13 +410,14 @@ class OCRWorker(QThread):
     error_occurred = pyqtSignal(str)
     progress_updated = pyqtSignal(int)  # progress percentage
     
-    def __init__(self, image, use_openai=False, api_key=None, model='gpt-4o', interview_mode=False):
+    def __init__(self, image, use_openai=False, api_key=None, model='gpt-4o', interview_mode=False, debug_console=False):
         super().__init__()
         self.image = image
         self.use_openai = use_openai
         self.api_key = api_key
         self.model = model
         self.interview_mode = interview_mode
+        self.debug_console = debug_console
         self.cancelled = False
         
     def cancel(self):
@@ -538,20 +539,42 @@ class OCRWorker(QThread):
         else:
             # Обычная логика
             if content_type == "question":
-                system_prompt = """Ты помощник, который отвечает на вопросы. Дай точный, информативный и полезный ответ на вопрос. 
-                Если это учебный вопрос, объясни решение пошагово. Отвечай на том же языке, что и вопрос."""
-                user_prompt = f"Ответь на этот вопрос: {text}"
+                # Специальная обработка для вопросов с вариантами ответов
+                if any(marker in text.lower() for marker in ['a)', 'b)', 'c)', 'd)', 'а)', 'б)', 'в)', 'г)']):
+                    system_prompt = """Ты помощник для ответов на вопросы с множественным выбором. 
+                    Текст может содержать ошибки OCR, но постарайся понять суть вопроса.
+                    Дай точный ответ и объясни свой выбор. Сохрани оригинальный формат вариантов ответа."""
+                    user_prompt = f"""Ответь на следующий вопрос с множественным выбором. 
+                    Текст мог быть распознан с ошибками OCR, но постарайся понять суть:
+
+{text}
+
+Укажи правильный вариант ответа и объясни почему."""
+                else:
+                    system_prompt = """Ты помощник, который отвечает на вопросы. 
+                    Текст может содержать ошибки OCR - исправь их и пойми суть вопроса.
+                    Дай точный, информативный и полезный ответ. Отвечай на том же языке, что и вопрос."""
+                    user_prompt = f"""Ответь на этот вопрос (может содержать ошибки OCR): 
+
+{text}"""
                 
             elif content_type == "task":
-                system_prompt = """Ты помощник для решения задач. Реши задачу пошагово, покажи все вычисления. 
-                Если это математическая задача, проверь правильность решения. Объясни каждый шаг.
+                system_prompt = """Ты помощник для решения задач. 
+                Текст может содержать ошибки OCR - исправь их и пойми суть задачи.
+                Реши задачу пошагово, покажи все вычисления. Объясни каждый шаг.
                 Отвечай на том же языке, что и задача."""
-                user_prompt = f"Реши эту задачу: {text}"
+                user_prompt = f"""Реши эту задачу (может содержать ошибки OCR):
+
+{text}"""
                 
             else:  # обычный текст
-                system_prompt = """Ты помощник для обработки текста. Исправь ошибки OCR, улучши форматирование, 
-                сделай текст более читаемым. Сохрани исходный смысл и язык текста."""
-                user_prompt = f"Исправь и отформатируй этот текст: {text}"
+                system_prompt = """Ты помощник для обработки текста. 
+                Исправь ошибки OCR, улучши форматирование, сделай текст более читаемым. 
+                Если текст кажется бессмысленным, попробуй восстановить его смысл, учитывая возможные ошибки распознавания.
+                Сохрани исходный смысл и язык текста."""
+                user_prompt = f"""Исправь ошибки OCR и отформатируй этот текст:
+
+{text}"""
             
         response = client.chat.completions.create(
             model=self.model,
@@ -575,7 +598,13 @@ class OCRWorker(QThread):
             custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя .,!?()[]{}":;+-=*/\\|_@#$%^&<>~`'
             
             # Пробуем разные PSM режимы для лучшего результата
-            psm_modes = [6, 8, 7, 13]  # Разные режимы сегментации страницы
+            # 6 - Uniform block of text
+            # 8 - Single word
+            # 7 - Single text line
+            # 11 - Sparse text (find as much text as possible)
+            # 4 - Single column of text
+            # 13 - Raw line (treat as single text line, no OSD)
+            psm_modes = [6, 11, 4, 7, 8, 13]  # Расширенный набор режимов
             best_text = ""
             best_confidence = 0
             
@@ -610,12 +639,31 @@ class OCRWorker(QThread):
                 
             raw_text = raw_text.strip()
             
-            # Дополнительная очистка текста
+            # Дополнительная очистка текста (более мягкая)
             if raw_text:
-                # Удаляем лишние пробелы и переносы строк
-                raw_text = ' '.join(raw_text.split())
-                # Убираем очевидно неправильные символы
-                raw_text = ''.join(char for char in raw_text if ord(char) < 65536)
+                # Сохраняем оригинальный текст для отладки
+                original_raw_text = raw_text
+                
+                # Нормализуем пробелы, но сохраняем переносы строк
+                lines = raw_text.split('\n')
+                cleaned_lines = []
+                for line in lines:
+                    # Убираем лишние пробелы в строке, но сохраняем структуру
+                    cleaned_line = ' '.join(line.split())
+                    if cleaned_line:  # Только непустые строки
+                        cleaned_lines.append(cleaned_line)
+                
+                raw_text = '\n'.join(cleaned_lines)
+                
+                # Логирование для отладки (если включено в настройках)
+                if self.debug_console:
+                    print(f"🧾 OCR raw result ({len(original_raw_text)} chars):")
+                    print("-" * 50)
+                    print(original_raw_text[:500] + "..." if len(original_raw_text) > 500 else original_raw_text)
+                    print("-" * 50)
+                    print(f"📋 After cleaning ({len(raw_text)} chars):")
+                    print(raw_text[:500] + "..." if len(raw_text) > 500 else raw_text)
+                    print("=" * 50)
             
             self.progress_updated.emit(40)
             if self.cancelled:
@@ -916,6 +964,39 @@ class SettingsDialog(QDialog):
         openai_group.setLayout(openai_layout)
         layout.addRow(openai_group)
         
+        # Видео настройки
+        video_group = QGroupBox("Видео Настройки")
+        video_layout = QFormLayout()
+        
+        # Выбор источника видео
+        self.video_source_combo = QComboBox()
+        self.refresh_video_sources()
+        video_layout.addRow("Источник видео:", self.video_source_combo)
+        
+        # Кнопка обновления источников
+        refresh_btn = QPushButton("🔄 Обновить")
+        refresh_btn.clicked.connect(self.refresh_video_sources)
+        video_layout.addRow("", refresh_btn)
+        
+        # Кнопка применения источника
+        apply_btn = QPushButton("✅ Применить источник")
+        apply_btn.clicked.connect(self.apply_video_source)
+        video_layout.addRow("", apply_btn)
+        
+        # Поле для файла/URL
+        self.video_file_input = QLineEdit()
+        self.video_file_input.setText(self.settings.get('video_file_path', ''))
+        self.video_file_input.setPlaceholderText("Путь к файлу или URL...")
+        video_layout.addRow("Файл/URL:", self.video_file_input)
+        
+        # Кнопка выбора файла
+        file_btn = QPushButton("📁 Выбрать файл")
+        file_btn.clicked.connect(self.select_video_file)
+        video_layout.addRow("", file_btn)
+        
+        video_group.setLayout(video_layout)
+        layout.addRow(video_group)
+        
         # OCR настройки
         ocr_group = QGroupBox("OCR Настройки")
         ocr_layout = QFormLayout()
@@ -948,6 +1029,11 @@ class SettingsDialog(QDialog):
         self.high_quality_checkbox.setChecked(self.settings.get('high_quality_mode', False))
         self.high_quality_checkbox.setToolTip("Использовать дополнительные алгоритмы для лучшего качества")
         quality_layout.addRow(self.high_quality_checkbox)
+        
+        self.debug_console_checkbox = QCheckBox("Отладочный вывод в консоль")
+        self.debug_console_checkbox.setChecked(self.settings.get('debug_console', False))
+        self.debug_console_checkbox.setToolTip("Выводить результаты OCR в консоль для отладки")
+        quality_layout.addRow(self.debug_console_checkbox)
         
         quality_group.setLayout(quality_layout)
         ocr_layout.addRow(quality_group)
@@ -1049,10 +1135,13 @@ class SettingsDialog(QDialog):
             'api_key': self.api_key_input.text(),
             'use_openai': self.use_openai_checkbox.isChecked(),
             'model': self.model_combo.currentText(),
+            'video_source': self.get_selected_video_source(),
+            'video_file_path': self.video_file_input.text(),
             'ocr_language': self.language_combo.currentText(),
             'preprocessing': self.preprocessing_checkbox.isChecked(),
             'scale_factor': self.scale_factor_spin.value(),
             'debug_images': self.debug_images_checkbox.isChecked(),
+            'debug_console': self.debug_console_checkbox.isChecked(),
             'high_quality_mode': self.high_quality_checkbox.isChecked(),
             'interview_mode': self.interview_mode_checkbox.isChecked(),
             'user_name': self.user_name_input.text(),
@@ -1064,6 +1153,42 @@ class SettingsDialog(QDialog):
             'autosave_enabled': self.autosave_checkbox.isChecked(),
             'log_level': self.log_level_combo.currentText()
         }
+    
+    def refresh_video_sources(self):
+        """Обновить список видео источников"""
+        self.video_source_combo.clear()
+        cameras = self.parent().get_available_cameras() if self.parent() else []
+        
+        for cam in cameras:
+            self.video_source_combo.addItem(cam['name'], cam['id'])
+        
+        # Устанавливаем текущий источник
+        current_source = self.settings.get('video_source', 0)
+        for i in range(self.video_source_combo.count()):
+            if self.video_source_combo.itemData(i) == current_source:
+                self.video_source_combo.setCurrentIndex(i)
+                break
+    
+    def get_selected_video_source(self):
+        """Получить ID выбранного видео источника"""
+        return self.video_source_combo.currentData()
+    
+    def select_video_file(self):
+        """Выбрать видео файл"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, 
+            "Выберите видео файл",
+            "",
+            "Video files (*.mp4 *.avi *.mov *.mkv *.webm *.flv);;All files (*.*)"
+        )
+        if file_path:
+            self.video_file_input.setText(file_path)
+    
+    def apply_video_source(self):
+        """Применить выбранный источник видео"""
+        if self.parent():
+            source_id = self.get_selected_video_source()
+            self.parent().setup_video_capture(source_id)
 
 
 class VideoWidget(QLabel):
@@ -1209,6 +1334,8 @@ class OBSCompleteAssistantOptimized(QMainWindow):
         self.ocr_worker = None
         self.history = []
         self.audio_history = []
+        self.screen_capture_mode = False
+        self.mss = None
         
         # Аудио переменные
         self.audio_worker = None
@@ -1324,10 +1451,13 @@ class OBSCompleteAssistantOptimized(QMainWindow):
             'api_key': os.getenv('OPENAI_API_KEY', ''),
             'use_openai': False,
             'model': 'gpt-4o',
+            'video_source': 0,
+            'video_file_path': '',
             'ocr_language': 'eng',
             'preprocessing': True,
             'scale_factor': 3,
             'debug_images': False,
+            'debug_console': False,
             'high_quality_mode': False,
             'interview_mode': False,
             'user_name': '',
@@ -1655,23 +1785,126 @@ class OBSCompleteAssistantOptimized(QMainWindow):
             
         self.status_widget.show_message("Windows organized", 2)
         
-    def setup_video_capture(self):
+    def get_available_cameras(self):
+        """Получить список доступных камер и источников"""
+        cameras = []
+        
+        # Проверяем камеры/устройства DirectShow
         for i in range(10):
             cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
             if cap.isOpened():
                 ret, frame = cap.read()
                 if ret:
-                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
-                    cap.set(cv2.CAP_PROP_FPS, 30)
+                    # Получаем название устройства если возможно
+                    name = f"Camera {i}"
+                    try:
+                        # Пытаемся получить свойства устройства
+                        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                        fps = int(cap.get(cv2.CAP_PROP_FPS))
+                        name = f"Camera {i} ({width}x{height}@{fps}fps)"
+                    except:
+                        pass
                     
-                    backend = cap.getBackendName()
-                    if "DSHOW" in backend or "DirectShow" in backend:
-                        self.cap = cap
-                        self.status_widget.show_message(f"Connected to camera {i}", 3)
-                        self.logger.info(f"Connected to camera {i}")
-                        break
+                    cameras.append({
+                        'id': i,
+                        'name': name,
+                        'type': 'camera',
+                        'backend': 'DSHOW'
+                    })
                 cap.release()
+        
+        # Добавляем опцию захвата экрана
+        cameras.append({
+            'id': -1,
+            'name': 'Desktop Screen',
+            'type': 'screen',
+            'backend': 'DESKTOP'
+        })
+        
+        # Добавляем опцию файла/URL
+        cameras.append({
+            'id': -2,
+            'name': 'File/URL Input',
+            'type': 'file',
+            'backend': 'FILE'
+        })
+        
+        return cameras
+    
+    def setup_video_capture(self, source_id=None):
+        """Настройка захвата видео с выбранного источника"""
+        if source_id is None:
+            source_id = self.settings.get('video_source', 0)
+        
+        if self.cap:
+            self.cap.release()
+            self.cap = None
+        
+        # Отключаем предыдущий режим захвата экрана
+        self.screen_capture_mode = False
+        if hasattr(self, 'mss') and self.mss:
+            try:
+                self.mss.close()
+            except:
+                pass
+            self.mss = None
+        
+        try:
+            if source_id == -1:  # Desktop capture
+                self.setup_screen_capture()
+            elif source_id == -2:  # File/URL
+                file_path = self.settings.get('video_file_path', '')
+                if file_path:
+                    self.setup_file_capture(file_path)
+                else:
+                    self.status_widget.show_message("No file path specified", 3)
+            else:  # Camera
+                cap = cv2.VideoCapture(source_id, cv2.CAP_DSHOW)
+                if cap.isOpened():
+                    ret, frame = cap.read()
+                    if ret:
+                        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+                        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+                        cap.set(cv2.CAP_PROP_FPS, 30)
+                        
+                        self.cap = cap
+                        self.settings['video_source'] = source_id
+                        self.status_widget.show_message(f"Connected to camera {source_id}", 3)
+                        self.logger.info(f"Connected to camera {source_id}")
+                    else:
+                        cap.release()
+                        self.status_widget.show_message(f"Failed to read from camera {source_id}", 3)
+                else:
+                    self.status_widget.show_message(f"Failed to open camera {source_id}", 3)
+        except Exception as e:
+            self.status_widget.show_message(f"Video setup error: {str(e)}", 5)
+            self.logger.error(f"Video setup error: {e}")
+    
+    def setup_screen_capture(self):
+        """Настройка захвата экрана"""
+        try:
+            import mss
+            self.mss = mss.mss()
+            self.screen_capture_mode = True
+            self.settings['video_source'] = -1
+            self.status_widget.show_message("Screen capture enabled", 3)
+            self.logger.info("Screen capture enabled")
+        except ImportError:
+            self.status_widget.show_message("mss library not installed for screen capture", 5)
+            self.logger.error("mss library not available")
+    
+    def setup_file_capture(self, file_path):
+        """Настройка захвата из файла"""
+        cap = cv2.VideoCapture(file_path)
+        if cap.isOpened():
+            self.cap = cap
+            self.settings['video_source'] = -2
+            self.settings['video_file_path'] = file_path
+            self.status_widget.show_message(f"Opened file: {file_path}", 3)
+            self.logger.info(f"Opened file: {file_path}")
+        else:
+            self.status_widget.show_message(f"Failed to open file: {file_path}", 5)
                 
         if not self.cap:
             self.status_widget.show_message("No DirectShow camera found - Audio recording available", 5)
@@ -1698,7 +1931,17 @@ class OBSCompleteAssistantOptimized(QMainWindow):
             self.logger.debug("Switched to normal mode (30 FPS)")
             
     def update_frame(self):
-        if self.cap and self.cap.isOpened():
+        if hasattr(self, 'screen_capture_mode') and self.screen_capture_mode:
+            # Захват экрана
+            try:
+                screenshot = self.mss.grab(self.mss.monitors[0])  # Главный монитор
+                frame = np.array(screenshot)
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+                self.current_frame = frame
+                self.video_widget.set_frame(frame)
+            except Exception as e:
+                self.status_widget.show_message(f"Screen capture error: {str(e)}", 3)
+        elif self.cap and self.cap.isOpened():
             ret, frame = self.cap.read()
             if ret:
                 self.current_frame = frame
@@ -1880,7 +2123,8 @@ class OBSCompleteAssistantOptimized(QMainWindow):
             self.settings.get('use_openai', False),
             self.settings.get('api_key', ''),
             self.settings.get('model', 'gpt-4o'),
-            self.settings.get('interview_mode', False)
+            self.settings.get('interview_mode', False),
+            self.settings.get('debug_console', False)
         )
         self.ocr_worker.result_ready.connect(self.handle_ocr_result)
         self.ocr_worker.error_occurred.connect(self.handle_ocr_error)
