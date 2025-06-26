@@ -1,0 +1,13 @@
+include README.md
+include README_EN.md
+include requirements.txt
+include .env.example
+include *.py
+include *.json
+recursive-include obs_assistant *.py
+recursive-include obs_assistant *.json
+recursive-include obs_assistant *.md
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude *~
+global-exclude __pycache__

@@ -1,0 +1,92 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "obs-complete-assistant"
+version = "1.0.0"
+description = "A comprehensive assistant for OBS Virtual Camera with OCR and audio processing"
+readme = "README_EN.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "OBS Assistant Team", email = "contact@obsassistant.com"},
+]
+keywords = ["obs", "virtual-camera", "ocr", "speech-to-text", "openai", "gpt-4", "interview-assistant"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Multimedia :: Video :: Capture",
+    "Topic :: Text Processing :: Linguistic",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "PyQt5==5.15.10",
+    "opencv-python==4.9.0.80",
+    "pytesseract==0.3.10",
+    "numpy<2",
+    "Pillow==10.2.0",
+    "pyperclip==1.8.2",
+    "openai==1.12.0",
+    "python-dotenv==1.0.0",
+    "sounddevice==0.4.6",
+    "requests",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0",
+    "black>=21.0",
+    "flake8>=3.8",
+    "mypy>=0.910",
+]
+
+[project.scripts]
+obs-assistant = "obs_assistant:main"
+
+[project.urls]
+Homepage = "https://github.com/obs-assistant/obs-complete-assistant"
+"Bug Reports" = "https://github.com/obs-assistant/obs-complete-assistant/issues"
+"Source" = "https://github.com/obs-assistant/obs-complete-assistant"
+"Documentation" = "https://github.com/obs-assistant/obs-complete-assistant#readme"
+"Changelog" = "https://github.com/obs-assistant/obs-complete-assistant/blob/main/CHANGELOG.md"
+"Security" = "https://github.com/obs-assistant/obs-complete-assistant/blob/main/SECURITY.md"
+
+[tool.setuptools]
+packages = ["obs_assistant"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+"*" = ["*.md", "*.txt", "*.json", "*.env.example"]
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true

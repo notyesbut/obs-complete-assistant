@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install build dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build setuptools wheel twine
+
+    - name: Build package
+      run: |
+        python -m build
+
+    - name: Generate release notes
+      id: release_notes
+      run: |
+        # Extract version from tag
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+        
+        # Generate release notes from CHANGELOG.md
+        if [ -f CHANGELOG.md ]; then
+          # Extract changelog section for this version
+          sed -n "/## \[$VERSION\]/,/## \[/p" CHANGELOG.md | head -n -1 > release_notes.md
+          # If no specific version found, use the top section
+          if [ ! -s release_notes.md ]; then
+            sed -n "/## \[/,/## \[/p" CHANGELOG.md | head -n -1 > release_notes.md
+          fi
+        else
+          echo "Release $VERSION" > release_notes.md
+        fi
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Release ${{ steps.release_notes.outputs.VERSION }}
+        body_path: release_notes.md
+        draft: false
+        prerelease: false
+
+    - name: Upload Source Distribution
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./dist/obs-complete-assistant-${{ steps.release_notes.outputs.VERSION }}.tar.gz
+        asset_name: obs-complete-assistant-${{ steps.release_notes.outputs.VERSION }}.tar.gz
+        asset_content_type: application/gzip
+
+    - name: Upload Wheel
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./dist/obs_complete_assistant-${{ steps.release_notes.outputs.VERSION }}-py3-none-any.whl
+        asset_name: obs_complete_assistant-${{ steps.release_notes.outputs.VERSION }}-py3-none-any.whl
+        asset_content_type: application/zip
+
+  # Optional: Publish to PyPI
+  # publish-pypi:
+  #   needs: create-release
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #   - uses: actions/checkout@v4
+  #   
+  #   - name: Set up Python
+  #     uses: actions/setup-python@v4
+  #     with:
+  #       python-version: '3.11'
+  #   
+  #   - name: Install build dependencies
+  #     run: |
+  #       python -m pip install --upgrade pip
+  #       pip install build twine
+  #   
+  #   - name: Build package
+  #     run: python -m build
+  #   
+  #   - name: Publish to PyPI
+  #     env:
+  #       TWINE_USERNAME: __token__
+  #       TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+  #     run: twine upload dist/*
