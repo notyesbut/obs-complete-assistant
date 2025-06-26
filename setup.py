@@ -12,7 +12,7 @@ with open('requirements.txt') as f:
 
 setup(
     name="obs-complete-assistant",
-    version="1.0.0",
+    version="1.1.0",
     author="OBS Assistant Team",
     author_email="contact@obsassistant.com",
     description="A comprehensive assistant for OBS Virtual Camera with OCR and audio processing",

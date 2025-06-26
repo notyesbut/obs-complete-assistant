@@ -209,7 +209,16 @@ python obs_assistant.py
 
 - Python 3.8+
 - OpenAI API key (required for audio functions)
-- PyAudio (for audio capture)
-- OBS Studio with Virtual Camera (for OCR versions)
-- Tesseract OCR (for OCR versions)
+- OBS Studio with Virtual Camera (for video OCR)
+- Tesseract OCR (for text recognition)
 - Windows/Linux/macOS
+
+### 📦 Latest Dependency Versions (December 2024)
+
+The application uses the latest stable versions:
+- **PyQt5**: 5.15.11 - GUI framework
+- **OpenCV**: 4.11.0.86 - Video processing
+- **NumPy**: 2.3.1 - Numerical computing
+- **Pillow**: 11.2.1 - Image processing
+- **OpenAI**: 1.92.0+ - AI integration
+- **Sounddevice**: 0.5.2 - Audio capture

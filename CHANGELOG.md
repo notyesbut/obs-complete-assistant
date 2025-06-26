@@ -99,6 +99,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.0] - 2024-12-26
+
+### Added
+- 🔍 **Enhanced OCR Quality**:
+  - Configurable image scaling (1-5x)
+  - High quality mode with advanced preprocessing
+  - Debug image saving for troubleshooting
+  - Multiple PSM modes with confidence analysis
+  - Improved text cleaning and validation
+
+### Changed
+- 📦 **Updated all dependencies to latest versions**:
+  - NumPy 1.x → 2.3.1 (major version upgrade)
+  - OpenCV 4.9 → 4.11.0.86
+  - Pillow 10.x → 11.2.1
+  - Sounddevice 0.4.x → 0.5.2
+  - All other dependencies updated to latest stable versions
+
+### Improved
+- 🎯 **OCR accuracy** significantly improved for:
+  - Small text and code
+  - Mathematical formulas
+  - Low quality images
+  - Complex layouts
+
+### Documentation
+- Added OCR_IMPROVEMENTS.md guide
+- Added VERSION_COMPATIBILITY.md
+- Updated dependency versions in all docs
+
+---
+
 ## [Unreleased]
 
 ### Planned Features
